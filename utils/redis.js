@@ -51,3 +51,21 @@ class RedisClient {
       });
     });
   }
+
+  /**
+   * Removes the value of a given key.
+   * @param {String} key The key of the item to remove.
+   * @returns {Promise<void>}
+   */
+  async del(key) {
+    return new Promise((resolve, reject) => {
+      this.client.del(key, (err) => {
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+  }
+}
+
+const redisClient = new RedisClient();
+module.exports = redisClient;
