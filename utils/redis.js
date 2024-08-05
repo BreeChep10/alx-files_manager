@@ -1,4 +1,4 @@
-t redis = require('redis');
+const redis = require('redis');
 
 class RedisClient {
   constructor() {
