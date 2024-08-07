@@ -1,16 +1,37 @@
-const AppController = require('../controllers/AppController');
-const UsersController = require('../controllers/UsersController');
-const AuthController = require('../controllers/AuthController');
-const postUpload = require('../controllers/FilesController');
+// eslint-disable-next-line no-unused-vars
+import { Express } from 'express';
+import AppController from '../controllers/AppController';
+import AuthController from '../controllers/AuthController';
+import UsersController from '../controllers/UsersController';
+import FilesController from '../controllers/FilesController';
+import { basicAuthenticate, xTokenAuthenticate } from '../middlewares/auth';
+import { APIError, errorResponse } from '../middlewares/error';
 
-const routes = (app) => {
-  app.get('/status', AppController.getStatus);
-  app.get('/stats', AppController.getStats);
-  app.post('/users', UsersController.createUser);
-  app.get('/connect', AuthController.getConnect);
-  app.get('/disconnect', AuthController.getDisconnect);
-  app.get('/users/me', UsersController.getMe);
-  app.post('/files', postUpload);
+/**
+ * Injects routes with their handlers to Express app
+ * @param {Express} api
+ */
+const injectRoutes = (api) => {
+  api.get('/status', AppController.getStatus);
+  api.get('/stats', AppController.getStats);
+
+  api.get('/connect', basicAuthenticate, AuthController.getConnect);
+  api.get('/disconnect', xTokenAuthenticate, AuthController.getDisconnect);
+
+  api.post('/users', UsersController.postNew);
+  api.get('/users/me', xTokenAuthenticate, UsersController.getMe);
+
+  api.post('/files', xTokenAuthenticate, FilesController.postUpload);
+  api.get('/files/:id', xTokenAuthenticate, FilesController.getShow);
+  api.get('/files', xTokenAuthenticate, FilesController.getIndex);
+  api.put('/files/:id/publish', xTokenAuthenticate, FilesController.putPublish);
+  api.put('/files/:id/unpublish', xTokenAuthenticate, FilesController.putUnpublish);
+  api.get('/files/:id/data', FilesController.getFile);
+
+  api.all('*', (req, res, next) => {
+    errorResponse(new APIError(404, `Cannot ${req.method} ${req.url}`), req, res, next);
+  });
+  api.use(errorResponse);
 };
 
-module.exports = routes;
+export default injectRoutes;
