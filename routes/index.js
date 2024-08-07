@@ -1,14 +1,9 @@
-import { Router } from 'express';
-import appRouter from './app';
-import authRouter from './auth';
-import usersRouter from './users';
-import filesRouter from './files';
+const express = require('express');
+const AppController = require('../controllers/AppController');
 
-// App router
-const router = Router();
-router.use(appRouter);
-router.use(authRouter);
-router.use(usersRouter);
-router.use(filesRouter);
+const router = express.Router();
 
-export default router;
+router.get('/status', AppController.getStatus);
+router.get('/stats', AppController.getStats);
+
+module.exports = router;
