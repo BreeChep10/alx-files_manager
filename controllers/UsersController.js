@@ -1,45 +1,29 @@
-const sha1 = require('sha1');
-const { ObjectId } = require('mongodb');
-const dbClient = require('../utils/db');
-const { redisClient } = require('../utils/redis');
+import sha1 from 'sha1';
+import { ObjectId } from 'mongodb';
+import dbClient from '../utils/db.js';
+import redisClient from '../utils/redis.js';
 
 export async function createUser(req, res) {
-  const email = req.body ? req.body.email : null;
-  const password = req.body ? req.body.password : null;
+  const email = req.body?.email ?? null;
+  const password = req.body?.password ?? null;
+
   if (!email) {
-    res.status(400).json({ error: 'Missing email' });
-    return;
+    return res.status(400).json({ error: 'Missing email' });
   }
   if (!password) {
-    res.status(400).json({ error: 'Missing password' });
-    return;
+    return res.status(400).json({ error: 'Missing password' });
   }
-  const collection = await dbClient.getClient('users');
+
+  const collection = dbClient.db.collection('users');
   const user = await collection.findOne({ email });
+
   if (user) {
-    res.status(400).json({ error: 'Already exist' });
-    return;
+    return res.status(400).json({ error: 'Already exist' });
   }
 
-  const created = await collection.insertOne({ email, password: sha1(password) });
-  const userId = created.insertedId.toString();
+  const hashedPassword = sha1(password);
+  const result = await collection.insertOne({ email, password: hashedPassword });
+  const userId = result.insertedId.toString();
 
-  res.status(201).json({ email, id: userId });
-}
-
-export async function getMe(req, res) {
-  const token = req.headers['x-token'];
-  const id = await redisClient.get(`auth_${token}`);
-  if (!id) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-
-  const collection = await dbClient.getClient('users');
-  const user = await collection.findOne({ _id: new ObjectId(id) });
-  if (!user) {
-    res.status(401).json({ error: 'Unauthorized' });
-  } else {
-    res.json({ id: user._id, email: user.email });
-  }
+  return res.status(201).json({ email, id: userId });
 }
