@@ -1,7 +1,7 @@
-const AppController = require('../controllers/AppController');
-const UsersController = require('../controllers/UsersController');
-const AuthController = require('../controllers/AuthController');
-const postUpload = require('../controllers/FilesController');
+import AppController from '../controllers/AppController.js';
+import UsersController from '../controllers/UsersController.js';
+import AuthController from '../controllers/AuthController.js';
+import FilesController from '../controllers/FilesController.js';
 
 const routes = (app) => {
   app.get('/status', AppController.getStatus);
@@ -10,7 +10,7 @@ const routes = (app) => {
   app.get('/connect', AuthController.getConnect);
   app.get('/disconnect', AuthController.getDisconnect);
   app.get('/users/me', UsersController.getMe);
-  app.post('/files', postUpload);
+  app.post('/files', FilesController.postUpload);
 };
 
-module.exports = routes;
+export default routes;
