@@ -1,188 +1,62 @@
-import fs from 'fs';
-import mime from 'mime-types';
-import Queue from 'bull';
-import { ObjectId } from 'mongodb';
-import dbClient from '../utils/db';
-import FilesCollection from '../utils/files';
-import AuthTokenHandler from '../utils/tokens';
-import UsersCollection from '../utils/users';
-import formatFileDocument from '../utils/format';
+const { ObjectId } = require('mongodb');
+const fs = require('fs');
+const { v4 } = require('uuid');
+const dbClient = require('../utils/db');
+const { redisClient } = require('../utils/redis');
 
-// Thumbnail generating queue
-const fileQueue = Queue('thumbnail generation');
+const rootFolder = process.env.FOLDER_PATH || 'temp/files_manager';
 
-class FilesController {
-  /**
-   * Controller for POST /files endpoint for handling file creation
-   * @typedef {import("express").Request} Request
-   * @typedef {import("express").Response} Response
-   * @param {Request} req - request object
-   * @param {Response} res - response object
-   */
-  static async postUpload(req, res) {
-    const userId = req.user._id;
-    let fileDocument;
-    try {
-      fileDocument = await FilesCollection.createFile({ ...req.body, userId });
-    } catch (err) {
-      res.status(400).json({ error: err.message });
-      return;
+module.exports = async function postUpload(req, res) {
+  const token = req.headers['x-token'];
+  const { name, type, data } = req.body;
+  const [isPublic, parentId] = [req.body.isPublic || false, req.body.parentId || 0];
+  const userId = await redisClient.get(`auth_${token}`);
+  const collection = await dbClient.getClient('files');
+
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+  } else if (!name) {
+    res.status(400).json({ error: 'Missing name' });
+  } else if (!type || !['folder', 'file', 'image'].includes(type)) {
+    res.status(400).json({ error: 'Missing type' });
+  } else if (!data && type !== 'folder') {
+    res.status(400).json({ error: 'Missing data' });
+  } else if (parentId !== 0) {
+    const file = await collection.findOne({ _id: parentId });
+    if (!file) {
+      res.status(400).json({ error: 'Page not found' });
+    } else if (file.type !== 'folder') {
+      res.status(400).json({ error: 'Parent is not a folder' });
     }
-
-    if (!fileDocument.type !== 'folder') {
-      // Store file data in local storage
-      FilesCollection.storeFileData(fileDocument.localPath, req.body.data);
-
-      // Add thumbnail job to queue
-      const jobData = { fileId: fileDocument._id, userId };
-      fileQueue.add(jobData);
-    }
-    res.status(201).json(formatFileDocument(fileDocument));
-  }
-
-  /**
-   * Controller for GET /files/:id that retrieves files
-   * information by their ids
-   * @param {Request} req - request object
-   * @param {Response} res - response object
-   */
-  static async getShow(req, res) {
-    // Request params retrieval and conversion to ObjectIds
-    const userId = req.user._id;
-    const { id } = req.params;
-    const _id = ObjectId.isValid(id) ? new ObjectId(id) : id;
-
-    const fileDocument = await FilesCollection.getFile({ _id, userId });
-    if (!fileDocument) return res.status(404).json({ error: 'Not found' });
-
-    const formattedResponse = formatFileDocument(fileDocument);
-    return res.status(200).json(formattedResponse);
-  }
-
-  /**
-   * Controller for GET /files endpoint that returns
-   * all files of a logged in user
-   * @param {Request} req - request object
-   * @param {Response} res - response object
-   */
-  static async getIndex(req, res) {
-    const MAX_PAGE_SIZE = 20;
-    const FilesCollection = dbClient.getCollection('files');
-    const userId = req.user._id;
-    const { parentId = '0', page = 0 } = req.query;
-    // Convert id query parameters to ObjectIds
-    const _parentId = parentId && ObjectId.isValid(parentId) ? new ObjectId(parentId) : parentId;
-
-    // Check if page number is valid
-    const _page = /^\d+$/.test(page) ? parseInt(page, 10) : 0;
-
-    // Pipeline for aggregation operation
-    const pipeline = [
-      { $match: { parentId: _parentId, userId } },
-      { $sort: { _id: 1 } },
-      { $skip: _page * MAX_PAGE_SIZE },
-      { $limit: MAX_PAGE_SIZE },
-    ];
-    const fileDocuments = await (await FilesCollection.aggregate(pipeline)).toArray();
-    const formattedResponse = fileDocuments.map((document) => formatFileDocument(document));
-    res.status(200).json(formattedResponse);
-  }
-
-  /**
- * Controller for GET /files/:id/publish endpoint that updates
- * file document's isPublic field to true
- * @param {Request} req - request object
- * @param {Response} res - response object
- */
-  static async putPublish(req, res) {
-    const userId = req.user._id;
-    const { id } = req.params;
-
-    // Search filers
-    const updateFilter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id, userId };
-
-    // Update parameters
-    const updateOperation = { $set: { isPublic: true } };
-
-    const commandResult = await FilesCollection.updateFile(updateFilter, updateOperation);
-    if (commandResult.matchedCount) {
-      const modifiedFileDOcument = await FilesCollection.getFile({ _id: updateFilter._id });
-      res.status(200).json(formatFileDocument(modifiedFileDOcument));
-    } else {
-      res.status(404).json({ error: 'Not found' });
-    }
-  }
-
-  /**
- * Controller for GET /files/:id/unpublish endpoint that updates
- * file document's isPublic field to false
- * @param {Request} req - request object
- * @param {Response} res - response object
- */
-  static async putUnpublish(req, res) {
-    const userId = req.user._id;
-    const { id } = req.params;
-
-    // Search filter
-    const updateFilter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id, userId };
-    // Update parameters
-    const updateOperation = { $set: { isPublic: false } };
-
-    const commandResult = await FilesCollection.updateFile(updateFilter, updateOperation);
-    if (commandResult.matchedCount) {
-      const modifiedFileDOcument = await FilesCollection.getFile({ _id: updateFilter._id });
-      res.status(200).json(formatFileDocument(modifiedFileDOcument));
-    } else {
-      res.status(404).json({ error: 'Not found' });
-    }
-  }
-
-  /**
-   * Controller for /GET /files/:id/data endpoint that retrieves
-   * data associated with a file
-   * @param {Request} req - request object
-   * @param {Response} res - response object
-   */
-  static async getFile(req, res) {
-    const IMG_SIZES = ['500', '250', '100'];
-    const token = req.get('X-Token');
-    const userId = await AuthTokenHandler.getUserByToken(token);
-    const user = await UsersCollection.getUser({
-      _id: ObjectId.isValid(userId)
-        ? ObjectId(userId) : userId,
+  } else if (type === 'folder') {
+    const obj = await collection.insertOne({
+      userId: ObjectId(userId),
+      name,
+      type,
+      isPublic,
+      parentId: parentId === 0 ? 0 : ObjectId(parentId),
     });
-    const { id } = req.params;
-    const { size } = req.query;
-    const _id = ObjectId.isValid(id) ? new ObjectId(id) : id;
-    const fileDocument = await FilesCollection.getFile({ _id });
-    if (!fileDocument) {
-      res.status(404).json({ error: 'Not found' });
-      return;
-    }
-    if (!fileDocument.isPublic && !user) {
-      res.status(404).json({ error: 'Not found' });
-      return;
-    }
-    if (!fileDocument.isPublic && fileDocument.userId.toString() !== userId) {
-      res.status(404).json({ error: 'Not found' });
-      return;
-    }
 
-    if (fileDocument.type === 'folder') {
-      res.status(400).json({ error: "A folder doesn't have content" });
-      return;
-    }
-    let filePath = fileDocument.localPath;
-    if (fileDocument.type === 'image' && IMG_SIZES.includes(size)) {
-      filePath = `${filePath}_${size}`;
-    }
-    if (!fs.existsSync(filePath)) {
-      res.status(404).json({ error: 'Not found' });
-      return;
-    }
-    res.append('Content-Type', mime.contentType(fileDocument.name));
-    res.sendFile(filePath);
+    const fName = obj.insertedId.toString();
+    res.json({
+      id: fName, userId, name, type, isPublic, parentId,
+    });
+    fs.mkdir(parentId === 0 ? `${rootFolder}/${fName}` : `${rootFolder}/${parentId}/${fName}`, () => {});
+  } else {
+    const fileDBName = v4().toString();
+    const localPath = parentId === 0 ? `${rootFolder}/${fileDBName}` : `${rootFolder}/${parentId}/${fileDBName}`;
+    const obj = await collection.insertOne({
+      userId: ObjectId(userId),
+      name,
+      type,
+      isPublic,
+      parentId: parentId === 0 ? 0 : ObjectId(parentId),
+      localPath,
+    });
+
+    fs.writeFile(localPath, Buffer.from(data, 'base64').toString('utf-8'), () => {});
+    res.status(201).json({
+      id: obj.insertedId.toString(), userId, name, type, isPublic, parentId,
+    });
   }
-}
-
-export default FilesController;
+};
