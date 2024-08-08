@@ -165,24 +165,25 @@ export default class FilesController {
    * @param {Response} res The Express response object.
    */
   static async getIndex(req, res) {
-    const { user } = req;
-    const parentId = req.query.parentId || ROOT_FOLDER_ID.toString();
-    const page = /\d+/.test((req.query.page || '').toString())
-      ? Number.parseInt(req.query.page, 10)
-      : 0;
-    const filesFilter = {
-      userId: user._id,
-      parentId: parentId === ROOT_FOLDER_ID.toString()
-        ? parentId
-        : new mongoDBCore.BSON.ObjectId(isValidId(parentId) ? parentId : NULL_ID),
-    };
+    try {
+      const user = await getUserFromXToken(req);
+      if (!user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
 
-    const files = await (await (await dbClient.filesCollection())
-      .aggregate([
+      const parentId = req.query.parentId || '0';
+      const page = parseInt(req.query.page, 10) || 0;
+
+      const filesFilter = {
+        userId: user._id,
+        parentId: parentId === '0' ? '0' : new mongoDBCore.BSON.ObjectId(isValidId(parentId) ? parentId : NULL_ID),
+      };
+
+      const files = await dbClient.filesCollection().aggregate([
         { $match: filesFilter },
         { $sort: { _id: -1 } },
-        { $skip: page * MAX_FILES_PER_PAGE },
-        { $limit: MAX_FILES_PER_PAGE },
+        { $skip: page * 20 },
+        { $limit: 20 },
         {
           $project: {
             _id: 0,
@@ -196,8 +197,13 @@ export default class FilesController {
             },
           },
         },
-      ])).toArray();
-    res.status(200).json(files);
+      ]).toArray();
+
+      return res.status(200).json(files);
+    } catch (error) {
+      console.error('Error in getIndex:', error);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
   }
 
   static async putPublish(req, res) {
